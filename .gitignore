@@ -1,0 +1,4 @@
+.envrc
+_cache/
+_site/
+dist-newstyle/
