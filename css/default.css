@@ -1,6 +1,6 @@
 @font-face {
-    font-family: 'playfair';
-    src: url("/assets/playfair.ttf") format('truetype')
+    font-family: 'crimson-pro';
+    src: url("/assets/crimson-pro.ttf") format('truetype')
 }
 
 body {
@@ -12,6 +12,7 @@ body {
   background-size: 200px;
   background-position: top;
   background-color: #F7F3F0;
+  font-family: "crimson-pro";
 }
 
 html {
@@ -35,14 +36,6 @@ a:visited {
     font-size: 1rem;
     text-align: center;
     display: block;
-}
-
-header {
-  min-height: 1em;
-}
-
-nav {
-  text-align: right;
 }
 
 nav a {
@@ -75,11 +68,7 @@ article .header {
   color: #555555;
 }
 
-article {
-  font-family: "playfair";
-}
-
-.logo a {
+.title a {
   font-size: 4rem;
   font-weight: bold;
   color: #333333;
@@ -102,7 +91,7 @@ article {
   footer {
     text-align: center;
   }
-  .logo {
+  .title {
     text-align: center;
     margin: 1rem auto 3rem;
   }
@@ -128,7 +117,7 @@ article {
   footer {
     text-align: center;
   }
-  .logo {
+  .title {
     text-align: center;
     margin: 1rem auto 3rem;
   }
@@ -159,11 +148,11 @@ article {
   footer {
     text-align: right;
   }
-  .logo {
+  .title {
     margin: 0;
     text-align: center;
   }
-  .logo a {
+  .title a {
     float: center;
   }
 }
