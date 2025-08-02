@@ -151,9 +151,9 @@ article .header {
   }
   .title {
     margin: 0;
-    text-align: left;
+    text-align: center;
   }
   .title a {
-    float: left;
+    float: center;
   }
 }
