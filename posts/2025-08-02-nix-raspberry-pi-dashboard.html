@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="x-ua-compatible" content="ie=edge">
+        <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1, viewport-fit=cover">
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🐅</text></svg>">
+        <title>rekk - Service dashboards on a NixOS Raspberry Pi</title>
+        <link rel="stylesheet" href="../css/default.css?version=2" />
+    </head>
+    <body>
+        <header>
+            <div class="title">
+                <a href="../">rekk</a>
+            </div>
+        </header>
+
+        <main role="main">
+            <h1>Service dashboards on a NixOS Raspberry Pi</h1>
+            <article>
+    <section class="header">
+        Posted on  2 August, 2025
+        
+    </section>
+    <section>
+        <p>We have a big, shared office. I want a big, shared screen in it, and I want our dashboards on it.</p>
+<h2 id="scope">Scope</h2>
+<p>We need a low-power device to run our web-based monitoring application on. I’ve decided on a third-generation Raspberry Pi for its availability and full-sized HDMI output. I’ll put in one of my spare SD cards specifically designed for long-running devices. That’s probably overkill.</p>
+<p>The Pi shall be responsible for exactly one thing: displaying our payment monitoring dashboards. To get there, we’ll cover a few topics of interest.</p>
+<p><strong>Limit permissions</strong></p>
+<p>Only authenticated users can access dashboards. That means we need new user credentials. The new user shall not be permitted to view anything but dashboards.</p>
+<p><strong>Make hardware access useless</strong></p>
+<p>Our office is a semi-public coworking space. Typically, one of us is in the room while the device is running. We might occasionally all leave the room or forget to turn the device off after work. If this happens, it should not be possible for a third party to extract sensitive information from the device or from the network.</p>
+<p>Let’s keep in mind that we <em>are</em> running a browser, so we can’t reasonably prevent web browsing.</p>
+<p><strong>Run a sensible OS</strong></p>
+<p>A low-maintenance device that has one simple job is a <em>perfect</em> use case for NixOS. The promise is that we’ll write a handful of Nix configuration files that are trivial to reason about, and out comes a fully prepared operating system with no further setup work required.</p>
+<h2 id="dashboard-switching">Dashboard switching</h2>
+<p>Our team has multiple dashboards, but we don’t want to put up multiple screens. Let’s switch between them every minute or so.</p>
+<p>… how <em>does</em> one periodically switch between websites though? There’s <em>probably</em> a browser extension? We can go more lightweight and declarative than that.</p>
+<p>I recently learned about the <a href="https://firefox-source-docs.mozilla.org/testing/marionette/Protocol.html">Marionette protocol</a>. After launching Firefox with it enabled, the browser will start listening for remote control commands over TCP on port 2828. We can send commands to navigate to certain pages, for example - sounds like what we need.</p>
+<blockquote>
+<p>Marionette is Firefox-specific, but the protocol and its commands largely follow the WebDriver API which we already know from testing frameworks like Selenium. Even if we don’t know WebDriver yet, we can consult <a href="https://searchfox.org/mozilla-central/source/remote/marionette/driver.sys.mjs#3857">Marionette source code</a> to learn about all supported commands. It’s easy to read.</p>
+</blockquote>
+<p>Let’s write some bash.</p>
+<p>We’ll open Firefox with Marionette enabled and use <code>netcat</code> to send commands to the Marionette server. Specifically, we want to navigate to a certain page with a <code>Navigate</code> command. There are a few more peculiarities we have to watch out for:</p>
+<ul>
+<li>Before we can navigate, we need a session - this means sending a <code>NewSession</code> command</li>
+<li>The server expects additional metadata with each command - see the snippet below</li>
+<li>We encounter race conditions unless we <code>sleep</code> between commands - maybe this is on me</li>
+</ul>
+<div class="sourceCode" id="cb1"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a><span class="co">#! /usr/bin/env -S nix shell nixpkgs#firefox nixpkgs#netcat --command bash</span></span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a><span class="ex">firefox</span> <span class="at">--marionette</span> <span class="kw">&amp;</span></span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a><span class="co"># We must send along a unique ID per command.</span></span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Let's simply count up from 0.</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a><span class="va">COMMAND_COUNTER</span><span class="op">=</span>0</span>
+<span id="cb1-8"><a href="#cb1-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-9"><a href="#cb1-9" aria-hidden="true" tabindex="-1"></a><span class="fu">command()</span> <span class="kw">{</span></span>
+<span id="cb1-10"><a href="#cb1-10" aria-hidden="true" tabindex="-1"></a>  <span class="va">COMMAND_COUNTER</span><span class="op">=</span><span class="va">$((</span> <span class="va">$COMMAND_COUNTER</span> <span class="op">+</span> <span class="dv">1</span> <span class="va">))</span></span>
+<span id="cb1-11"><a href="#cb1-11" aria-hidden="true" tabindex="-1"></a>  <span class="va">command</span><span class="op">=</span><span class="st">&quot;[0,</span><span class="va">$COMMAND_COUNTER</span><span class="st">,</span><span class="dt">\&quot;</span><span class="va">$1</span><span class="dt">\&quot;</span><span class="st">,</span><span class="va">$2</span><span class="st">]&quot;</span></span>
+<span id="cb1-12"><a href="#cb1-12" aria-hidden="true" tabindex="-1"></a>  </span>
+<span id="cb1-13"><a href="#cb1-13" aria-hidden="true" tabindex="-1"></a>  <span class="co"># For each command we send, we must prepend</span></span>
+<span id="cb1-14"><a href="#cb1-14" aria-hidden="true" tabindex="-1"></a>  <span class="co"># the character count of that command.</span></span>
+<span id="cb1-15"><a href="#cb1-15" aria-hidden="true" tabindex="-1"></a>  <span class="bu">echo</span> <span class="at">-n</span> <span class="st">&quot;</span><span class="va">${</span><span class="op">#</span><span class="va">command}</span><span class="st">:</span><span class="va">$command</span><span class="st">&quot;</span></span>
+<span id="cb1-16"><a href="#cb1-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-17"><a href="#cb1-17" aria-hidden="true" tabindex="-1"></a>  <span class="fu">sleep</span> 1</span>
+<span id="cb1-18"><a href="#cb1-18" aria-hidden="true" tabindex="-1"></a><span class="kw">}</span></span>
+<span id="cb1-19"><a href="#cb1-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-20"><a href="#cb1-20" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 1</span>
+<span id="cb1-21"><a href="#cb1-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb1-22"><a href="#cb1-22" aria-hidden="true" tabindex="-1"></a><span class="kw">(</span></span>
+<span id="cb1-23"><a href="#cb1-23" aria-hidden="true" tabindex="-1"></a>  <span class="bu">command</span> <span class="st">'WebDriver:NewSession'</span> <span class="st">'{}'</span></span>
+<span id="cb1-24"><a href="#cb1-24" aria-hidden="true" tabindex="-1"></a>  <span class="bu">command</span> <span class="st">'WebDriver:Navigate'</span> <span class="st">'{&quot;url&quot;:&quot;https://example.com&quot;}'</span></span>
+<span id="cb1-25"><a href="#cb1-25" aria-hidden="true" tabindex="-1"></a><span class="kw">)</span> <span class="kw">|</span> <span class="fu">tee</span> /dev/tty <span class="kw">|</span> <span class="ex">nc</span> localhost 2828</span></code></pre></div>
+<p>The <code>command</code> function merely enriches our command with the metadata the protocol expects. If we run this, we’ll see Firefox open and immediately navigate to <code>https://example.com</code>.</p>
+<p>Let’s try opening multiple websites:</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="fu">cycle()</span> <span class="kw">{</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="cf">while</span> <span class="fu">true</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="cf">do</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    <span class="bu">command</span> <span class="st">'WebDriver:Navigate'</span> <span class="st">'{&quot;url&quot;:&quot;https://beispiel.de&quot;}'</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    <span class="fu">sleep</span> 5</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>    <span class="bu">command</span> <span class="st">'WebDriver:Navigate'</span> <span class="st">'{&quot;url&quot;:&quot;https://example.com&quot;}'</span></span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    <span class="fu">sleep</span> 5</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>  <span class="cf">done</span></span>
+<span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="kw">}</span></span>
+<span id="cb2-10"><a href="#cb2-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb2-11"><a href="#cb2-11" aria-hidden="true" tabindex="-1"></a><span class="kw">(</span></span>
+<span id="cb2-12"><a href="#cb2-12" aria-hidden="true" tabindex="-1"></a>  <span class="bu">command</span> <span class="st">'WebDriver:NewSession'</span> <span class="st">'{}'</span></span>
+<span id="cb2-13"><a href="#cb2-13" aria-hidden="true" tabindex="-1"></a>  <span class="ex">cycle</span></span>
+<span id="cb2-14"><a href="#cb2-14" aria-hidden="true" tabindex="-1"></a><span class="kw">)</span> <span class="kw">|</span> <span class="fu">tee</span> /dev/tty <span class="kw">|</span> <span class="ex">nc</span> localhost 2828</span></code></pre></div>
+<p>Just like that, we’re cycling between pages. How cool is that, and could it take any less code?<a href="#fn1" class="footnote-ref" id="fnref1" role="doc-noteref"><sup>1</sup></a> <a href="#fn2" class="footnote-ref" id="fnref2" role="doc-noteref"><sup>2</sup></a></p>
+<p>Marionette supports many more commands. For our simple use case, this is all we need.</p>
+<h2 id="running-one-program-on-startup">Running one program on startup</h2>
+<p>The script above opens a browser and cycles between our dashboards (or example URLs, in this case). How do we automatically run the script when the Pi is turned on?</p>
+<p>The idea of running a singular, isolated, full-screen program right after starting up is not new. We’re describing <em>kiosk software</em>. <a href="https://en.wikipedia.org/wiki/Kiosk_software">Wikipedia</a> defines it as such (shortened):</p>
+<blockquote>
+<p>Kiosk software prevents user interaction outside the scope of execution of the software.</p>
+</blockquote>
+<p>We’ll use <a href="https://github.com/cage-kiosk/cage/">cage</a> this time around. <em>Once the system is up</em><a href="#fn3" class="footnote-ref" id="fnref3" role="doc-noteref"><sup>3</sup></a>, all we have to do after is invoke <code>cage</code> with the script we wrote above. <code>cage</code> will take over the rest and turn our device into a kiosk.</p>
+<h2 id="building-an-image">Building an image</h2>
+<p>We still don’t have an operating system for the Pi. Typically, Linux distributions provide an image that you can flash onto a thumb drive. We could download a copy of any distro, boot into it, and set it up from scratch.</p>
+<p>A bit of <code>sudo apt-get install firefox</code> …</p>
+<p>… except, let’s not do that. I’ve written some Nix code to create a purpose-built image instead. I know <em>exactly</em> what I’m getting upfront this way - no runtime configuration needed.</p>
+<p>Here’s a distilled version.<a href="#fn4" class="footnote-ref" id="fnref4" role="doc-noteref"><sup>4</sup></a></p>
+<p><code>flake.nix</code>:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode nix"><code class="sourceCode nix"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>  <span class="va">inputs</span> <span class="op">=</span> <span class="op">{</span> <span class="va">nixpkgs</span>.<span class="va">url</span> <span class="op">=</span> <span class="st">&quot;github:nixos/nixpkgs/nixos-unstable&quot;</span><span class="op">;</span> <span class="op">};</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>  <span class="va">outputs</span> <span class="op">=</span> <span class="op">{</span> <span class="va">nixpkgs</span><span class="op">,</span> <span class="op">...</span> <span class="op">}</span>: <span class="op">{</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>  <span class="va">nixosConfigurations</span>.<span class="va">nix-pi</span> <span class="op">=</span> nixpkgs<span class="op">.</span>lib<span class="op">.</span>nixosSystem <span class="op">{</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a>    <span class="va">system</span> <span class="op">=</span> <span class="st">&quot;aarch64-linux&quot;</span><span class="op">;</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a>    <span class="va">modules</span> <span class="op">=</span> <span class="op">[</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a>    <span class="st">&quot;</span><span class="sc">${</span>nixpkgs<span class="sc">}</span><span class="st">/nixos/modules/installer/sd-card/sd-image-aarch64.nix&quot;</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a>    <span class="ss">./configuration.nix</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a>    <span class="op">];</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a>  <span class="op">};</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a>  <span class="op">};</span></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a></span></code></pre></div>
+<p><code>configuration.nix</code>:</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode nix"><code class="sourceCode nix"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="op">{</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>  <span class="va">networking</span>.<span class="va">hostName</span> <span class="op">=</span> <span class="st">&quot;nix-pi&quot;</span><span class="op">;</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Disallow SSH password auth</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a>  <span class="va">services</span>.<span class="va">openssh</span> <span class="op">=</span> <span class="op">{</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a>    <span class="va">enable</span> <span class="op">=</span> <span class="cn">true</span><span class="op">;</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a>    <span class="va">settings</span> <span class="op">=</span> <span class="op">{</span></span>
+<span id="cb4-8"><a href="#cb4-8" aria-hidden="true" tabindex="-1"></a>      <span class="va">PasswordAuthentication</span> <span class="op">=</span> <span class="cn">false</span><span class="op">;</span></span>
+<span id="cb4-9"><a href="#cb4-9" aria-hidden="true" tabindex="-1"></a>      <span class="va">KbdInteractiveAuthentication</span> <span class="op">=</span> <span class="cn">false</span><span class="op">;</span></span>
+<span id="cb4-10"><a href="#cb4-10" aria-hidden="true" tabindex="-1"></a>    <span class="op">};</span></span>
+<span id="cb4-11"><a href="#cb4-11" aria-hidden="true" tabindex="-1"></a>  <span class="op">};</span></span>
+<span id="cb4-12"><a href="#cb4-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-13"><a href="#cb4-13" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Allow my user to connect via SSH so I can push updates</span></span>
+<span id="cb4-14"><a href="#cb4-14" aria-hidden="true" tabindex="-1"></a>  <span class="va">users</span>.<span class="va">users</span>.<span class="va">root</span> <span class="op">=</span> <span class="op">{</span></span>
+<span id="cb4-15"><a href="#cb4-15" aria-hidden="true" tabindex="-1"></a>    <span class="va">openssh</span>.<span class="va">authorizedKeys</span>.<span class="va">keys</span> <span class="op">=</span> <span class="op">[</span></span>
+<span id="cb4-16"><a href="#cb4-16" aria-hidden="true" tabindex="-1"></a>      // …</span>
+<span id="cb4-17"><a href="#cb4-17" aria-hidden="true" tabindex="-1"></a>    <span class="op">];</span></span>
+<span id="cb4-18"><a href="#cb4-18" aria-hidden="true" tabindex="-1"></a>    </span>
+<span id="cb4-19"><a href="#cb4-19" aria-hidden="true" tabindex="-1"></a>    <span class="va">hashedPassword</span> <span class="op">=</span> <span class="st">&quot;…&quot;</span><span class="op">;</span></span>
+<span id="cb4-20"><a href="#cb4-20" aria-hidden="true" tabindex="-1"></a>  <span class="op">};</span></span>
+<span id="cb4-21"><a href="#cb4-21" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-22"><a href="#cb4-22" aria-hidden="true" tabindex="-1"></a>  <span class="co"># Run `cage` at startup  </span></span>
+<span id="cb4-23"><a href="#cb4-23" aria-hidden="true" tabindex="-1"></a>  <span class="va">services</span>.<span class="va">cage</span> <span class="op">=</span> <span class="op">{</span></span>
+<span id="cb4-24"><a href="#cb4-24" aria-hidden="true" tabindex="-1"></a>    <span class="va">enable</span> <span class="op">=</span> <span class="cn">true</span><span class="op">;</span></span>
+<span id="cb4-25"><a href="#cb4-25" aria-hidden="true" tabindex="-1"></a>    <span class="va">program</span> <span class="op">=</span> pkgs<span class="op">.</span>writeShellScript <span class="st">&quot;cage-script&quot;</span> <span class="st">''</span></span>
+<span id="cb4-26"><a href="#cb4-26" aria-hidden="true" tabindex="-1"></a><span class="st">      # Our script from above goes here</span></span>
+<span id="cb4-27"><a href="#cb4-27" aria-hidden="true" tabindex="-1"></a><span class="st">    ''</span><span class="op">;</span></span>
+<span id="cb4-28"><a href="#cb4-28" aria-hidden="true" tabindex="-1"></a>  <span class="op">}</span></span>
+<span id="cb4-29"><a href="#cb4-29" aria-hidden="true" tabindex="-1"></a><span class="er">}</span></span></code></pre></div>
+<p>Building this results in a ready-to-flash operating system image.</p>
+<p>Given we’re building a full OS image, you may be wondering if making updates to the system means building a new OS image every time and flashing it onto the Pi. It doesn’t. After modifying the configuration, it takes mere seconds to rebuild the parts that have changed with <code>nixos-rebuild</code>. We can then push those updates directly to the device over the network.</p>
+<p>We’re done. Let’s stare at some dashboards.</p>
+<section id="footnotes" class="footnotes footnotes-end-of-document" role="doc-endnotes">
+<hr />
+<ol>
+<li id="fn1"><p>The final script does a bit more than is visible here (like handling SIGINT correctly).<a href="#fnref1" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn2"><p>The Nix shebang is great: we know that we need Firefox and Netcat for our script to work and we can make that explicit right in the first line. Nix then automatically fetches these dependencies.<a href="#fnref2" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn3"><p>NixOS will take care of this for us because we asked it to enable <code>services.cage</code>. Under the hood, Nix creates a <code>systemd</code> unit for us. But we don’t have to think about that at all.<a href="#fnref3" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+<li id="fn4"><p>Some of the things I’ve omitted: trimming the amount of dependencies the default installation ships with, figuring out the cross-compilation setup, the correct CLI incantations to build the image, and glue code.<a href="#fnref4" class="footnote-back" role="doc-backlink">↩︎</a></p></li>
+</ol>
+</section>
+    </section>
+</article>
+
+        </main>
+    </body>
+</html>
