@@ -1,6 +1,6 @@
 @font-face {
     font-family: 'crimson-pro';
-    src: url("/assets/crimson-pro.ttf") format('truetype')
+    src: url("../assets/crimson-pro.ttf") format('truetype')
 }
 
 body {
