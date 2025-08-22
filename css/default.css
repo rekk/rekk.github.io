@@ -199,3 +199,7 @@ sup {
 a.footnote-ref {
   text-decoration: none;
 }
+
+figcaption {
+  font-style: italic;
+}
